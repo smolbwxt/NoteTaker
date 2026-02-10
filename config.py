@@ -10,6 +10,7 @@ DEFAULTS = {
     "hf_token": "",
     "model": "medium",
     "model_cache_dir": "",  # Custom cache dir for models; blank = default ~/.cache
+    "deps_dir": "",         # Directory containing .whl files for offline pip install
     "ollama_url": "http://localhost:11434",
     "ollama_model": "llama3.2:3b",
     "default_export_dir": os.path.join(_SCRIPT_DIR, "exports"),
