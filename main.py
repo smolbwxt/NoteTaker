@@ -44,6 +44,7 @@ from recorder import DualAudioRecorder
 from transcriber import WhisperXTranscriber, TranscriptionResult
 from summarizer import OllamaSummarizer, MeetingSummary, build_clipboard_prompt
 from exporter import DocxExporter
+from speaker_db import SpeakerDB
 
 # Ensure ffmpeg next to script is on PATH
 _script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -89,6 +90,11 @@ class NoteTakerApp:
         # Device maps: display name -> device index
         self._loopback_map: dict[str, int] = {}
         self._mic_map: dict[str, int] = {}
+
+        # Speaker voice database for cross-meeting recognition
+        self._speaker_db = SpeakerDB(
+            os.path.join(_script_dir, ".notetaker_speakers.json")
+        )
 
         self._build_ui()
         self._refresh_audio_devices()
@@ -445,7 +451,8 @@ class NoteTakerApp:
         # --- Step 1: Transcribe ---
         try:
             transcriber = WhisperXTranscriber(
-                model_name=self.model_choice.get()
+                model_name=self.model_choice.get(),
+                download_root=self._whisper_download_root(),
             )
             result = transcriber.transcribe(
                 audio_path=audio_path,
@@ -532,6 +539,10 @@ class NoteTakerApp:
 
             messagebox.showinfo("Export Complete", f"Files saved:\n\n{saved}")
 
+            # Offer to name speakers if voice prints were extracted
+            if self._current_result and self._current_result.speaker_embeddings:
+                self._show_speaker_naming()
+
         self.root.after(0, _done)
 
     def _clipboard_prompt_fallback(self, transcript_text: str):
@@ -559,7 +570,8 @@ class NoteTakerApp:
             messagebox.showwarning("No file", "Please select or record an audio file first.")
             return
 
-        if self.diarize_enabled.get() and not self.hf_token.get().strip():
+        offline = os.environ.get("HF_HUB_OFFLINE") == "1"
+        if self.diarize_enabled.get() and not offline and not self.hf_token.get().strip():
             messagebox.showwarning(
                 "Token required",
                 "Speaker diarization requires a Hugging Face token.\n\n"
@@ -582,7 +594,8 @@ class NoteTakerApp:
     def _transcribe_only_worker(self):
         try:
             transcriber = WhisperXTranscriber(
-                model_name=self.model_choice.get()
+                model_name=self.model_choice.get(),
+                download_root=self._whisper_download_root(),
             )
             result = transcriber.transcribe(
                 audio_path=self.file_path.get(),
@@ -605,6 +618,10 @@ class NoteTakerApp:
                 self.save_btn.config(state="normal")
                 self.copy_btn.config(state="normal")
                 self.copy_prompt_btn.config(state="normal")
+
+                # Offer to name speakers if voice prints were extracted
+                if result.speaker_embeddings:
+                    self._show_speaker_naming()
 
             self.root.after(0, _done)
 
@@ -809,11 +826,123 @@ class NoteTakerApp:
         self.notebook.select(1)
         self.status_text.set("Summary prompt copied to clipboard!")
 
+    def _whisper_download_root(self) -> str | None:
+        """Return the HF hub cache path for faster-whisper, or None for default."""
+        cache_dir = self.cfg.get("model_cache_dir", "")
+        if cache_dir:
+            return os.path.join(cache_dir, "huggingface", "hub")
+        return None
+
+    # ==================================================================
+    # Speaker Recognition
+    # ==================================================================
+
+    def _show_speaker_naming(self):
+        """Match speaker embeddings against DB and show naming dialog."""
+        if not self._current_result or not self._current_result.speaker_embeddings:
+            return
+
+        embeddings = self._current_result.speaker_embeddings
+
+        # Pre-match against stored voices
+        suggestions = {}
+        for label, emb in embeddings.items():
+            suggestions[label] = self._speaker_db.match(emb) or ""
+
+        dialog = SpeakerNameDialog(self.root, suggestions)
+        self.root.wait_window(dialog)
+
+        if not dialog.result:
+            return
+
+        # Replace speaker labels in segments
+        for seg in self._current_result.segments:
+            old = seg.get("speaker", "")
+            new_name = dialog.result.get(old, "")
+            if new_name:
+                seg["speaker"] = new_name
+
+        # Save embeddings to DB
+        for label, name in dialog.result.items():
+            if name and label in embeddings:
+                self._speaker_db.add_or_update(name, embeddings[label])
+
+        # Refresh transcript display with real names
+        self._set_text(
+            self.transcript_box, self._current_result.format_as_text()
+        )
+        self.status_text.set("Speaker names updated!")
+
     def _save_config(self):
         self.cfg.set_many({
             "hf_token": self.hf_token.get().strip(),
             "model": self.model_choice.get(),
         })
+
+
+# ==================================================================
+# Speaker Name Dialog
+# ==================================================================
+
+class SpeakerNameDialog(tk.Toplevel):
+    """Modal dialog for assigning real names to detected speakers."""
+
+    def __init__(self, parent, suggestions: dict):
+        """
+        suggestions: {speaker_label: suggested_name_or_empty_string}
+        """
+        super().__init__(parent)
+        self.title("Name Speakers")
+        self.result: dict = {}
+        self.transient(parent)
+        self.grab_set()
+        self.resizable(False, False)
+
+        ttk.Label(
+            self,
+            text="Assign names to detected speakers.\n"
+            "Leave blank to keep the original label.",
+        ).pack(padx=15, pady=(15, 5))
+
+        frame = ttk.Frame(self)
+        frame.pack(padx=15, pady=5, fill="x")
+
+        self._entries: dict[str, tk.StringVar] = {}
+        for i, (label, suggestion) in enumerate(sorted(suggestions.items())):
+            ttk.Label(frame, text=f"{label}:").grid(
+                row=i, column=0, sticky="w", pady=3
+            )
+            var = tk.StringVar(value=suggestion)
+            entry = ttk.Entry(frame, textvariable=var, width=30)
+            entry.grid(row=i, column=1, padx=(10, 0), pady=3)
+            if suggestion:
+                ttk.Label(frame, text="(matched)", foreground="green").grid(
+                    row=i, column=2, padx=(5, 0)
+                )
+            self._entries[label] = var
+
+        btn_frame = ttk.Frame(self)
+        btn_frame.pack(pady=15)
+        ttk.Button(btn_frame, text="Save", command=self._save).pack(
+            side="left", padx=5
+        )
+        ttk.Button(btn_frame, text="Skip", command=self.destroy).pack(
+            side="left", padx=5
+        )
+
+        self.protocol("WM_DELETE_WINDOW", self.destroy)
+        # Center on parent
+        self.update_idletasks()
+        x = parent.winfo_x() + (parent.winfo_width() - self.winfo_width()) // 2
+        y = parent.winfo_y() + (parent.winfo_height() - self.winfo_height()) // 2
+        self.geometry(f"+{x}+{y}")
+
+    def _save(self):
+        self.result = {
+            label: var.get().strip()
+            for label, var in self._entries.items()
+        }
+        self.destroy()
 
 
 # ==================================================================

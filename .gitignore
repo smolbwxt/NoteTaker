@@ -1,6 +1,7 @@
-# Config files with tokens
+# Config files with tokens / user data
 .notetaker_config.json
 .transcriber_config.json
+.notetaker_speakers.json
 
 # Model bundles (large binary — distributed via GitHub Releases)
 notetaker_models.zip

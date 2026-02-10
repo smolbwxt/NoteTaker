@@ -1,5 +1,6 @@
 """WhisperX transcription with optional speaker diarization."""
 
+import os
 import time
 from typing import Optional, Callable
 
@@ -9,10 +10,12 @@ from typing import Optional, Callable
 class TranscriptionResult:
     """Container for transcription output."""
 
-    def __init__(self, segments: list, language: str, elapsed_time: float):
+    def __init__(self, segments: list, language: str, elapsed_time: float,
+                 speaker_embeddings: dict = None):
         self.segments = segments
         self.language = language
         self.elapsed_time = elapsed_time
+        self.speaker_embeddings = speaker_embeddings or {}
 
     def format_as_text(self, include_timestamps: bool = True) -> str:
         lines: list[str] = []
@@ -84,8 +87,10 @@ class WhisperXTranscriber:
         model_name: str = "base",
         device: str = None,
         compute_type: str = None,
+        download_root: str = None,
     ):
         self.model_name = model_name
+        self.download_root = download_root
         # Auto-detect device/compute
         if device is None:
             import torch
@@ -106,7 +111,8 @@ class WhisperXTranscriber:
         max_speakers: Optional[int] = None,
         progress_callback: Optional[Callable[[str], None]] = None,
     ) -> TranscriptionResult:
-        if enable_diarization and not (hf_token and hf_token.strip()):
+        offline = os.environ.get("HF_HUB_OFFLINE") == "1"
+        if enable_diarization and not offline and not (hf_token and hf_token.strip()):
             raise ValueError("Speaker diarization requires a Hugging Face token.")
 
         def _status(msg: str):
@@ -116,8 +122,12 @@ class WhisperXTranscriber:
         import whisperx
 
         _status(f"Loading '{self.model_name}' model ({self.device})...")
+        load_kwargs = {}
+        if self.download_root:
+            load_kwargs["download_root"] = self.download_root
         model = whisperx.load_model(
-            self.model_name, self.device, compute_type=self.compute_type
+            self.model_name, self.device, compute_type=self.compute_type,
+            **load_kwargs
         )
 
         _status("Loading audio...")
@@ -151,11 +161,13 @@ class WhisperXTranscriber:
             torch.cuda.empty_cache()
 
         # Diarization
+        speaker_embeddings = {}
         if enable_diarization:
             _status("Running speaker diarization (this can take a while)...")
             from whisperx.diarize import DiarizationPipeline
+            auth_token = hf_token.strip() if hf_token else None
             diarize_model = DiarizationPipeline(
-                use_auth_token=hf_token.strip(), device=self.device
+                use_auth_token=auth_token, device=self.device
             )
             kwargs = {}
             if min_speakers is not None and min_speakers > 0:
@@ -166,6 +178,59 @@ class WhisperXTranscriber:
             diarize_segments = diarize_model(audio, **kwargs)
             result = whisperx.assign_word_speakers(diarize_segments, result)
 
+            _status("Extracting speaker voice prints...")
+            speaker_embeddings = self._extract_embeddings(
+                audio, diarize_segments, self.device
+            )
+
         elapsed = time.time() - start
         segments = result.get("segments", [])
-        return TranscriptionResult(segments, language, elapsed)
+        return TranscriptionResult(segments, language, elapsed, speaker_embeddings)
+
+    @staticmethod
+    def _extract_embeddings(audio_np, diarize_segments, device: str) -> dict:
+        """Extract per-speaker voice embeddings from diarized audio."""
+        try:
+            import numpy as np
+            import torch
+            from pyannote.audio import Inference
+
+            inference = Inference(
+                "pyannote/wespeaker-voxceleb-resnet34-LM",
+                use_auth_token=None,
+                window="whole",
+                device=torch.device(device),
+            )
+            sr = 16000  # whisperx uses 16kHz
+
+            # Group time ranges by speaker from the diarization DataFrame
+            speaker_times: dict[str, list] = {}
+            for _, row in diarize_segments.iterrows():
+                speaker = str(row["speaker"])
+                start = float(row["start"])
+                end = float(row["end"])
+                speaker_times.setdefault(speaker, []).append((start, end))
+
+            embeddings = {}
+            for speaker, times in speaker_times.items():
+                chunks = []
+                for start, end in times:
+                    s_idx = int(start * sr)
+                    e_idx = int(end * sr)
+                    if e_idx > s_idx and e_idx <= len(audio_np):
+                        chunks.append(audio_np[s_idx:e_idx])
+                if not chunks:
+                    continue
+
+                combined = np.concatenate(chunks)
+                # Limit to 60s for performance
+                if len(combined) > 60 * sr:
+                    combined = combined[: 60 * sr]
+
+                waveform = torch.tensor(combined, dtype=torch.float32).unsqueeze(0)
+                emb = inference({"waveform": waveform, "sample_rate": sr})
+                embeddings[speaker] = emb.flatten().tolist()
+
+            return embeddings
+        except Exception:
+            return {}
