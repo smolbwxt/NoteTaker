@@ -1,5 +1,6 @@
 """WhisperX transcription with optional speaker diarization."""
 
+import os
 import time
 from typing import Optional, Callable
 
@@ -108,7 +109,8 @@ class WhisperXTranscriber:
         max_speakers: Optional[int] = None,
         progress_callback: Optional[Callable[[str], None]] = None,
     ) -> TranscriptionResult:
-        if enable_diarization and not (hf_token and hf_token.strip()):
+        offline = os.environ.get("HF_HUB_OFFLINE") == "1"
+        if enable_diarization and not offline and not (hf_token and hf_token.strip()):
             raise ValueError("Speaker diarization requires a Hugging Face token.")
 
         def _status(msg: str):
@@ -160,8 +162,9 @@ class WhisperXTranscriber:
         if enable_diarization:
             _status("Running speaker diarization (this can take a while)...")
             from whisperx.diarize import DiarizationPipeline
+            auth_token = hf_token.strip() if hf_token else None
             diarize_model = DiarizationPipeline(
-                use_auth_token=hf_token.strip(), device=self.device
+                use_auth_token=auth_token, device=self.device
             )
             kwargs = {}
             if min_speakers is not None and min_speakers > 0:

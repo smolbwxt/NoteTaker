@@ -560,7 +560,8 @@ class NoteTakerApp:
             messagebox.showwarning("No file", "Please select or record an audio file first.")
             return
 
-        if self.diarize_enabled.get() and not self.hf_token.get().strip():
+        offline = os.environ.get("HF_HUB_OFFLINE") == "1"
+        if self.diarize_enabled.get() and not offline and not self.hf_token.get().strip():
             messagebox.showwarning(
                 "Token required",
                 "Speaker diarization requires a Hugging Face token.\n\n"
