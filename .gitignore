@@ -2,6 +2,9 @@
 .notetaker_config.json
 .transcriber_config.json
 
+# Model bundles (large binary — distributed via GitHub Releases)
+notetaker_models.zip
+
 # Recordings and exports
 recordings/
 exports/

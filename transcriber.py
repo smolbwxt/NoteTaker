@@ -4,6 +4,8 @@ import time
 from typing import Optional, Callable
 
 
+
+
 class TranscriptionResult:
     """Container for transcription output."""
 
@@ -151,7 +153,8 @@ class WhisperXTranscriber:
         # Diarization
         if enable_diarization:
             _status("Running speaker diarization (this can take a while)...")
-            diarize_model = whisperx.DiarizationPipeline(
+            from whisperx.diarize import DiarizationPipeline
+            diarize_model = DiarizationPipeline(
                 use_auth_token=hf_token.strip(), device=self.device
             )
             kwargs = {}

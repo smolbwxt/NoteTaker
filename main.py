@@ -14,10 +14,14 @@ Setup:
         ollama serve
 """
 
+# PyTorch 2.6+ defaults weights_only=True in torch.load, which breaks
+# whisperx/pyannote checkpoint loading.  This env var restores the old default.
+import os
+os.environ["TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD"] = "1"
+
 import tkinter as tk
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 import threading
-import os
 import time
 from datetime import datetime
 
@@ -440,12 +444,8 @@ class NoteTakerApp:
             self._current_result = result
             transcript_text = result.format_as_text()
             self.root.after(0, lambda: self._set_text(self.transcript_box, transcript_text))
-        except ImportError:
-            self._on_error(
-                "whisperx is not installed.\n\n"
-                "Install it with:  pip install whisperx\n"
-                "You also need ffmpeg on your system."
-            )
+        except ImportError as e:
+            self._on_error(f"Import error:\n\n{e}\n\n(pip install whisperx)")
             return
         except Exception as e:
             self._on_error(f"Transcription failed:\n\n{e}")
@@ -594,11 +594,8 @@ class NoteTakerApp:
 
             self.root.after(0, _done)
 
-        except ImportError:
-            self._on_error(
-                "whisperx is not installed.\n\n"
-                "Install with:  pip install whisperx"
-            )
+        except ImportError as e:
+            self._on_error(f"Import error:\n\n{e}\n\n(pip install whisperx)")
         except Exception as e:
             self._on_error(f"Transcription failed:\n\n{e}")
 

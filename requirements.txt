@@ -2,10 +2,9 @@
 PyAudioWPatch>=0.2.12.8
 numpy>=1.24.0
 
-# Transcription
+# Transcription (torch/torchaudio are pulled in by whisperx — don't pin them
+# separately to avoid conflicting with existing installations)
 whisperx>=3.1.1
-torch>=2.0.0
-torchaudio>=2.0.0
 
 # Summarization (Ollama HTTP API)
 requests>=2.31.0
