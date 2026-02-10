@@ -1,6 +1,7 @@
 # Audio recording
 PyAudioWPatch>=0.2.12.8
 numpy>=1.24.0
+scipy>=1.10.0
 
 # Transcription (torch/torchaudio are pulled in by whisperx — don't pin them
 # separately to avoid conflicting with existing installations)
