@@ -84,8 +84,10 @@ class WhisperXTranscriber:
         model_name: str = "base",
         device: str = None,
         compute_type: str = None,
+        download_root: str = None,
     ):
         self.model_name = model_name
+        self.download_root = download_root
         # Auto-detect device/compute
         if device is None:
             import torch
@@ -116,8 +118,12 @@ class WhisperXTranscriber:
         import whisperx
 
         _status(f"Loading '{self.model_name}' model ({self.device})...")
+        load_kwargs = {}
+        if self.download_root:
+            load_kwargs["download_root"] = self.download_root
         model = whisperx.load_model(
-            self.model_name, self.device, compute_type=self.compute_type
+            self.model_name, self.device, compute_type=self.compute_type,
+            **load_kwargs
         )
 
         _status("Loading audio...")

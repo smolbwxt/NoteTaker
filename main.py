@@ -445,7 +445,8 @@ class NoteTakerApp:
         # --- Step 1: Transcribe ---
         try:
             transcriber = WhisperXTranscriber(
-                model_name=self.model_choice.get()
+                model_name=self.model_choice.get(),
+                download_root=self._whisper_download_root(),
             )
             result = transcriber.transcribe(
                 audio_path=audio_path,
@@ -582,7 +583,8 @@ class NoteTakerApp:
     def _transcribe_only_worker(self):
         try:
             transcriber = WhisperXTranscriber(
-                model_name=self.model_choice.get()
+                model_name=self.model_choice.get(),
+                download_root=self._whisper_download_root(),
             )
             result = transcriber.transcribe(
                 audio_path=self.file_path.get(),
@@ -808,6 +810,13 @@ class NoteTakerApp:
         )
         self.notebook.select(1)
         self.status_text.set("Summary prompt copied to clipboard!")
+
+    def _whisper_download_root(self) -> str | None:
+        """Return the HF hub cache path for faster-whisper, or None for default."""
+        cache_dir = self.cfg.get("model_cache_dir", "")
+        if cache_dir:
+            return os.path.join(cache_dir, "huggingface", "hub")
+        return None
 
     def _save_config(self):
         self.cfg.set_many({

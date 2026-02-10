@@ -8,7 +8,7 @@ _DEFAULT_CONFIG_PATH = os.path.join(_SCRIPT_DIR, ".notetaker_config.json")
 
 DEFAULTS = {
     "hf_token": "",
-    "model": "base",
+    "model": "medium",
     "model_cache_dir": "",  # Custom cache dir for models; blank = default ~/.cache
     "ollama_url": "http://localhost:11434",
     "ollama_model": "llama3.2:3b",
