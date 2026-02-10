@@ -6,33 +6,57 @@ Usage (after downloading the release asset):
 Or, if 'notetaker_models.zip' is in the same directory as this script:
     python install_models.py
 
-This places model files into the standard cache directories under ~/.cache
-so that WhisperX, pyannote, and wav2vec2 find them automatically.
+Optionally specify a custom cache directory (instead of ~/.cache):
+    python install_models.py notetaker_models.zip --cache-dir /path/to/cache
+
+Then set "model_cache_dir": "/path/to/cache" in .notetaker_config.json so
+the application finds the models there.
+
+This places model files into the standard cache directories so that
+WhisperX, pyannote, and wav2vec2 find them automatically.
 """
 
 import os
 import sys
 import zipfile
 
-HOME = os.path.expanduser("~")
 
-# Maps archive prefix → local destination
-DEST_MAP = {
-    "huggingface/hub/models--Systran--faster-whisper-medium":
-        os.path.join(HOME, ".cache", "huggingface", "hub", "models--Systran--faster-whisper-medium"),
-    "torch/pyannote":
-        os.path.join(HOME, ".cache", "torch", "pyannote"),
-    "torch/hub/checkpoints":
-        os.path.join(HOME, ".cache", "torch", "hub", "checkpoints"),
-}
+def _build_dest_map(cache_root: str) -> dict:
+    """Build archive-prefix → local-destination mapping for the given cache root."""
+    return {
+        "huggingface/hub/models--Systran--faster-whisper-medium":
+            os.path.join(cache_root, "huggingface", "hub", "models--Systran--faster-whisper-medium"),
+        "torch/pyannote":
+            os.path.join(cache_root, "torch", "pyannote"),
+        "torch/hub/checkpoints":
+            os.path.join(cache_root, "torch", "hub", "checkpoints"),
+    }
 
 
 def main():
-    # Find the zip file
-    if len(sys.argv) > 1:
-        zip_path = sys.argv[1]
-    else:
+    # Parse args
+    args = sys.argv[1:]
+    cache_dir = None
+    zip_path = None
+
+    i = 0
+    while i < len(args):
+        if args[i] == "--cache-dir" and i + 1 < len(args):
+            cache_dir = args[i + 1]
+            i += 2
+        elif zip_path is None:
+            zip_path = args[i]
+            i += 1
+        else:
+            i += 1
+
+    if zip_path is None:
         zip_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "notetaker_models.zip")
+
+    if cache_dir is None:
+        cache_dir = os.path.join(os.path.expanduser("~"), ".cache")
+
+    DEST_MAP = _build_dest_map(cache_dir)
 
     if not os.path.isfile(zip_path):
         print(f"ERROR: Cannot find '{zip_path}'")
@@ -41,7 +65,7 @@ def main():
         sys.exit(1)
 
     print(f"Unpacking: {zip_path}")
-    print(f"Target:    {os.path.join(HOME, '.cache')}")
+    print(f"Target:    {cache_dir}")
     print()
 
     extracted = 0
@@ -81,7 +105,9 @@ def main():
     if skipped:
         print(f"  ({skipped} files skipped — unknown prefix)")
     print()
-    print("Models are now installed in ~/.cache/ and ready to use.")
+    print(f"Models are now installed in {cache_dir} and ready to use.")
+    if cache_dir != os.path.join(os.path.expanduser("~"), ".cache"):
+        print(f'Set "model_cache_dir": "{cache_dir}" in .notetaker_config.json')
     print("You can delete the zip file to save disk space.")
 
 

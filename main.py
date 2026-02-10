@@ -19,6 +19,20 @@ Setup:
 import os
 os.environ["TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD"] = "1"
 
+# Tell HuggingFace / transformers to use only locally-cached models and never
+# reach out to the internet.  Models must be pre-installed via install_models.py.
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
+os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+
+# Allow a custom model cache directory (set in .notetaker_config.json as
+# "model_cache_dir").  When set, this redirects HuggingFace and PyTorch model
+# lookups so models can live on a different drive or shared location.
+from config import ConfigManager as _BootCfg
+_boot_cache = _BootCfg().get("model_cache_dir", "")
+if _boot_cache and os.path.isdir(_boot_cache):
+    os.environ.setdefault("HF_HOME", os.path.join(_boot_cache, "huggingface"))
+    os.environ.setdefault("TORCH_HOME", os.path.join(_boot_cache, "torch"))
+
 import tkinter as tk
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 import threading
