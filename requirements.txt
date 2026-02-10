@@ -1,0 +1,14 @@
+# Audio recording
+PyAudioWPatch>=0.2.12.8
+numpy>=1.24.0
+
+# Transcription
+whisperx>=3.1.1
+torch>=2.0.0
+torchaudio>=2.0.0
+
+# Summarization (Ollama HTTP API)
+requests>=2.31.0
+
+# Export
+python-docx>=0.8.11

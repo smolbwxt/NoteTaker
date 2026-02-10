@@ -1,0 +1,23 @@
+# Config files with tokens
+.notetaker_config.json
+.transcriber_config.json
+
+# Recordings and exports
+recordings/
+exports/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+venv/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+desktop.ini
