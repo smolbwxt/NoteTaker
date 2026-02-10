@@ -3,19 +3,22 @@
 
 Setup:
     1. On a PC with internet, download the wheels:
-           pip download -r requirements.txt -d ./notetaker_deps/
+           pip download -r requirements-cli.txt -d ./notetaker_deps/
        (Also download torch/torchaudio separately if needed)
 
-    2. Copy the wheel directory to the airgapped PC
+    2. Copy the wheel directory to the target PC
 
-    3. Set the path in .notetaker_config.json:
-           { "deps_dir": "C:\\path\\to\\notetaker_deps" }
+    3. Run this script:
+           python install_deps.py /path/to/notetaker_deps
 
-    4. Run this script:
-           python install_deps.py
+    For Linux/HPC (no recording, no PyAudioWPatch):
+        python install_deps.py /path/to/notetaker_deps --cli
 
-Or pass the path directly:
-    python install_deps.py C:\\path\\to\\notetaker_deps
+    For Windows (full GUI + recording):
+        python install_deps.py C:\\path\\to\\notetaker_deps
+
+Or set the path in .notetaker_config.json:
+    { "deps_dir": "/path/to/notetaker_deps" }
 """
 
 import os
@@ -23,16 +26,23 @@ import sys
 import subprocess
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-REQUIREMENTS = os.path.join(_SCRIPT_DIR, "requirements.txt")
+REQUIREMENTS_FULL = os.path.join(_SCRIPT_DIR, "requirements.txt")
+REQUIREMENTS_CLI = os.path.join(_SCRIPT_DIR, "requirements-cli.txt")
 
 
 def main():
-    # Resolve deps directory: CLI arg > config > ./notetaker_deps/
+    # Parse args
     deps_dir = None
+    cli_only = False
 
-    if len(sys.argv) > 1:
-        deps_dir = sys.argv[1]
-    else:
+    for arg in sys.argv[1:]:
+        if arg == "--cli":
+            cli_only = True
+        elif not arg.startswith("-"):
+            deps_dir = arg
+
+    # Fall back to config
+    if deps_dir is None:
         from config import ConfigManager
         cfg = ConfigManager()
         deps_dir = cfg.get("deps_dir", "")
@@ -43,10 +53,11 @@ def main():
     if not os.path.isdir(deps_dir):
         print(f"ERROR: Dependencies directory not found: {deps_dir}")
         print()
-        print("Options:")
-        print(f"  1. Set \"deps_dir\" in .notetaker_config.json")
-        print(f"  2. Pass the path:  python install_deps.py C:\\path\\to\\wheels")
-        print(f"  3. Place wheels in: {os.path.join(_SCRIPT_DIR, 'notetaker_deps')}")
+        print("Usage:")
+        print(f"  python install_deps.py /path/to/wheels         # full (Windows)")
+        print(f"  python install_deps.py /path/to/wheels --cli   # CLI only (Linux/HPC)")
+        print()
+        print("Or set \"deps_dir\" in .notetaker_config.json")
         sys.exit(1)
 
     wheels = [f for f in os.listdir(deps_dir)
@@ -56,7 +67,12 @@ def main():
         print(f"ERROR: No .whl files found in {deps_dir}")
         sys.exit(1)
 
+    req_file = REQUIREMENTS_CLI if cli_only else REQUIREMENTS_FULL
+    mode = "CLI only (no PyAudioWPatch)" if cli_only else "Full (GUI + recording)"
+
     print(f"Installing from: {deps_dir}")
+    print(f"Mode: {mode}")
+    print(f"Requirements: {os.path.basename(req_file)}")
     print(f"Found {len(wheels)} package(s)")
     print()
 
@@ -64,7 +80,7 @@ def main():
         sys.executable, "-m", "pip", "install",
         "--no-index",
         "--find-links", deps_dir,
-        "-r", REQUIREMENTS,
+        "-r", req_file,
     ]
 
     print(f"$ {' '.join(cmd)}")

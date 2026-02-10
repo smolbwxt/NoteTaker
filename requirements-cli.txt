@@ -1,0 +1,6 @@
+# Core dependencies for transcription (cross-platform, CLI + GUI)
+numpy>=1.24.0
+scipy>=1.10.0
+whisperx>=3.1.1
+requests>=2.31.0
+python-docx>=0.8.11
