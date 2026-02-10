@@ -1,4 +1,4 @@
-"""Meeting transcript summarization via local Ollama API."""
+"""Meeting transcript summarization — clipboard prompt or local Ollama."""
 
 import re
 import requests
@@ -205,3 +205,24 @@ def _parse_action_item(text: str) -> dict:
 
     item["task"] = text.strip()
     return item
+
+
+# ==================================================================
+# Clipboard prompt (primary path — no local LLM required)
+# ==================================================================
+
+CLIPBOARD_PROMPT = """{system}
+
+{summary_template}"""
+
+
+def build_clipboard_prompt(transcript: str) -> str:
+    """Return a ready-to-paste prompt combining instructions + transcript.
+
+    The user copies this into their airgapped ChatGPT to get structured
+    meeting notes without needing a local LLM.
+    """
+    return CLIPBOARD_PROMPT.format(
+        system=SYSTEM_PROMPT,
+        summary_template=SUMMARY_TEMPLATE.format(transcript=transcript),
+    )

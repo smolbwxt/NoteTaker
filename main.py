@@ -24,7 +24,7 @@ from datetime import datetime
 from config import ConfigManager
 from recorder import DualAudioRecorder
 from transcriber import WhisperXTranscriber, TranscriptionResult
-from summarizer import OllamaSummarizer, MeetingSummary
+from summarizer import OllamaSummarizer, MeetingSummary, build_clipboard_prompt
 from exporter import DocxExporter
 
 # Ensure ffmpeg next to script is on PATH
@@ -254,6 +254,11 @@ class NoteTakerApp:
         )
         self.copy_btn.pack(side="left", padx=(10, 0))
 
+        self.copy_prompt_btn = ttk.Button(
+            btn_frame, text="Copy Summary Prompt", command=self._copy_summary_prompt, state="disabled"
+        )
+        self.copy_prompt_btn.pack(side="left", padx=(10, 0))
+
         # --- Status ---
         status_frame = ttk.Frame(self.root)
         status_frame.pack(fill="x", padx=15, pady=(5, 0))
@@ -446,29 +451,29 @@ class NoteTakerApp:
             self._on_error(f"Transcription failed:\n\n{e}")
             return
 
-        # --- Step 2: Summarize ---
-        try:
-            summarizer = OllamaSummarizer(
-                ollama_url=self.cfg.get("ollama_url", "http://localhost:11434"),
-                model=self.cfg.get("ollama_model", "llama3.2:3b"),
-            )
-            summary = summarizer.summarize(
-                transcript=transcript_text,
-                progress_callback=self._update_status,
-            )
-            self._current_summary = summary
-            self.root.after(0, lambda: self._set_text(self.summary_box, summary.raw_summary))
-        except ConnectionError as e:
-            # Ollama not running — offer to skip
+        # --- Step 2: Summarize (Ollama if available, otherwise clipboard prompt) ---
+        summarizer = OllamaSummarizer(
+            ollama_url=self.cfg.get("ollama_url", "http://localhost:11434"),
+            model=self.cfg.get("ollama_model", "llama3.2:3b"),
+        )
+
+        if summarizer.check_available():
+            try:
+                summary = summarizer.summarize(
+                    transcript=transcript_text,
+                    progress_callback=self._update_status,
+                )
+                self._current_summary = summary
+                self.root.after(0, lambda: self._set_text(self.summary_box, summary.raw_summary))
+            except Exception as e:
+                self._current_summary = None
+                self._update_status("Ollama failed — copying prompt to clipboard instead...")
+                self._clipboard_prompt_fallback(transcript_text)
+        else:
+            # No Ollama — use clipboard prompt as primary path
             self._current_summary = None
-            self.root.after(0, lambda: self._offer_skip_summary(str(e), audio_path))
-            return
-        except Exception as e:
-            self._current_summary = None
-            self.root.after(0, lambda: self._offer_skip_summary(
-                f"Summarization failed:\n{e}", audio_path
-            ))
-            return
+            self._update_status("Ollama not found — copying summary prompt to clipboard...")
+            self._clipboard_prompt_fallback(transcript_text)
 
         # --- Step 3: Export ---
         self._auto_export(audio_path)
@@ -508,31 +513,27 @@ class NoteTakerApp:
                 saved = f"Notes: {docx_path}\n{saved}"
                 self.status_text.set("Pipeline complete — notes exported!")
             else:
-                self.status_text.set("Pipeline complete — transcript saved (no summary).")
+                saved += "\n\nSummary prompt copied to clipboard — paste into ChatGPT."
+                self.status_text.set("Pipeline complete — paste prompt into ChatGPT for summary.")
 
             messagebox.showinfo("Export Complete", f"Files saved:\n\n{saved}")
 
         self.root.after(0, _done)
 
-    def _offer_skip_summary(self, error_msg: str, audio_path: str):
-        """Show error and offer to continue without summarization."""
-        self.progress.stop()
-        result = messagebox.askyesno(
-            "Summarization Unavailable",
-            f"{error_msg}\n\n"
-            "Would you like to skip summarization and save just the transcript?",
-        )
-        if result:
-            self._set_text(self.summary_box, "(Summarization skipped)")
-            # Still export transcript
-            thread = threading.Thread(
-                target=self._auto_export, args=(audio_path,), daemon=True
+    def _clipboard_prompt_fallback(self, transcript_text: str):
+        """Copy the summary prompt to clipboard so user can paste into ChatGPT."""
+        prompt = build_clipboard_prompt(transcript_text)
+
+        def _do():
+            self.root.clipboard_clear()
+            self.root.clipboard_append(prompt)
+            self._set_text(
+                self.summary_box,
+                "(Summary prompt copied to clipboard — paste into ChatGPT)\n\n"
+                "---\n\n" + prompt,
             )
-            thread.start()
-        else:
-            self._is_processing = False
-            self._set_controls_enabled(True)
-            self.status_text.set("Pipeline stopped — transcript available.")
+
+        self.root.after(0, _do)
 
     # ==================================================================
     # Transcribe Only (file upload path)
@@ -589,6 +590,7 @@ class NoteTakerApp:
                 self.summarize_btn.config(state="normal")
                 self.save_btn.config(state="normal")
                 self.copy_btn.config(state="normal")
+                self.copy_prompt_btn.config(state="normal")
 
             self.root.after(0, _done)
 
@@ -727,6 +729,7 @@ class NoteTakerApp:
             self.export_btn,
             self.save_btn,
             self.copy_btn,
+            self.copy_prompt_btn,
         ):
             btn.config(state=state)
         # Record button always available (to stop)
@@ -777,6 +780,23 @@ class NoteTakerApp:
             self.root.clipboard_clear()
             self.root.clipboard_append(text)
             self.status_text.set("Copied to clipboard!")
+
+    def _copy_summary_prompt(self):
+        """Build and copy a ready-to-paste summary prompt from the current transcript."""
+        if not self._current_result:
+            messagebox.showwarning("No transcript", "Run transcription first.")
+            return
+        transcript_text = self._current_result.format_as_text()
+        prompt = build_clipboard_prompt(transcript_text)
+        self.root.clipboard_clear()
+        self.root.clipboard_append(prompt)
+        self._set_text(
+            self.summary_box,
+            "(Summary prompt copied to clipboard — paste into ChatGPT)\n\n"
+            "---\n\n" + prompt,
+        )
+        self.notebook.select(1)
+        self.status_text.set("Summary prompt copied to clipboard!")
 
     def _save_config(self):
         self.cfg.set_many({
