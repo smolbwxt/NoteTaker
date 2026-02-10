@@ -293,7 +293,7 @@ class NoteTakerApp:
         status_frame.pack(fill="x", padx=15, pady=(5, 0))
 
         self.progress = ttk.Progressbar(
-            status_frame, mode="indeterminate", length=200
+            status_frame, mode="determinate", length=200, maximum=100
         )
         self.progress.pack(side="left")
 
@@ -442,7 +442,7 @@ class NoteTakerApp:
         self._set_controls_enabled(False)
         self._set_text(self.transcript_box, "")
         self._set_text(self.summary_box, "")
-        self.progress.start(15)
+        self.progress["value"] = 0
         self.status_text.set("Starting pipeline...")
 
         thread = threading.Thread(
@@ -529,7 +529,7 @@ class NoteTakerApp:
             return
 
         def _done():
-            self.progress.stop()
+            self.progress["value"] = 100
             self._is_processing = False
             self._set_controls_enabled(True)
             self.notebook.select(1)  # Switch to Summary tab
@@ -589,7 +589,7 @@ class NoteTakerApp:
         self._is_processing = True
         self._set_controls_enabled(False)
         self._set_text(self.transcript_box, "")
-        self.progress.start(15)
+        self.progress["value"] = 0
         self.status_text.set("Loading model...")
 
         thread = threading.Thread(
@@ -616,7 +616,7 @@ class NoteTakerApp:
 
             def _done():
                 self._set_text(self.transcript_box, transcript_text)
-                self.progress.stop()
+                self.progress["value"] = 100
                 self.status_text.set(f"Transcribed in {result.elapsed_time:.1f}s")
                 self._is_processing = False
                 self._set_controls_enabled(True)
@@ -648,7 +648,7 @@ class NoteTakerApp:
 
         self._is_processing = True
         self._set_controls_enabled(False)
-        self.progress.start(15)
+        self.progress["value"] = 0
         self.status_text.set("Starting summarization...")
 
         thread = threading.Thread(target=self._summarize_worker, daemon=True)
@@ -669,7 +669,7 @@ class NoteTakerApp:
 
             def _done():
                 self._set_text(self.summary_box, summary.raw_summary)
-                self.progress.stop()
+                self.progress["value"] = 100
                 self.status_text.set("Summarization complete!")
                 self._is_processing = False
                 self._set_controls_enabled(True)
@@ -771,8 +771,30 @@ class NoteTakerApp:
         # Record button always available (to stop)
         self.record_btn.config(state="normal")
 
+    # Progress step mapping — maps status message prefixes to bar percentages
+    _PROGRESS_STEPS = {
+        "Loading":       5,
+        "Loading audio": 10,
+        "Transcribing":  50,
+        "Aligning":      65,
+        "Running speaker": 80,
+        "Extracting":    95,
+        "Checking Ollama": 70,
+        "Summarizing":   80,
+        "Parsing":       95,
+        "Exporting":     90,
+        "Starting":      0,
+    }
+
     def _update_status(self, msg: str):
-        self.root.after(0, lambda: self.status_text.set(msg))
+        def _do():
+            self.status_text.set(msg)
+            # Advance progress bar based on known pipeline stages
+            for prefix, pct in self._PROGRESS_STEPS.items():
+                if msg.startswith(prefix):
+                    self.progress["value"] = pct
+                    break
+        self.root.after(0, _do)
 
     @staticmethod
     def _set_text(widget, text: str):
@@ -784,7 +806,7 @@ class NoteTakerApp:
 
     def _on_error(self, msg: str):
         def _do():
-            self.progress.stop()
+            self.progress["value"] = 0
             self.status_text.set("Error")
             self._is_processing = False
             self._set_controls_enabled(True)
