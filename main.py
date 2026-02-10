@@ -283,6 +283,11 @@ class NoteTakerApp:
         )
         self.copy_prompt_btn.pack(side="left", padx=(10, 0))
 
+        self.name_speakers_btn = ttk.Button(
+            btn_frame, text="Name Speakers", command=self._show_speaker_naming, state="disabled"
+        )
+        self.name_speakers_btn.pack(side="left", padx=(10, 0))
+
         # --- Status ---
         status_frame = ttk.Frame(self.root)
         status_frame.pack(fill="x", padx=15, pady=(5, 0))
@@ -539,8 +544,9 @@ class NoteTakerApp:
 
             messagebox.showinfo("Export Complete", f"Files saved:\n\n{saved}")
 
-            # Offer to name speakers if voice prints were extracted
+            # Enable speaker naming if voice prints were extracted
             if self._current_result and self._current_result.speaker_embeddings:
+                self.name_speakers_btn.config(state="normal")
                 self._show_speaker_naming()
 
         self.root.after(0, _done)
@@ -619,8 +625,9 @@ class NoteTakerApp:
                 self.copy_btn.config(state="normal")
                 self.copy_prompt_btn.config(state="normal")
 
-                # Offer to name speakers if voice prints were extracted
+                # Enable speaker naming if voice prints were extracted
                 if result.speaker_embeddings:
+                    self.name_speakers_btn.config(state="normal")
                     self._show_speaker_naming()
 
             self.root.after(0, _done)
@@ -758,6 +765,7 @@ class NoteTakerApp:
             self.save_btn,
             self.copy_btn,
             self.copy_prompt_btn,
+            self.name_speakers_btn,
         ):
             btn.config(state=state)
         # Record button always available (to stop)
