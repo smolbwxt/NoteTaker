@@ -220,7 +220,7 @@ def _build_sbatch_script(hpc: HPCConfig, remote_audio: str, remote_results: str)
 #SBATCH --time={hpc.time}
 #SBATCH --output={hpc.remote_dir}/slurm_%j.log
 
-source /etc/profile.d/modules.sh 2>/dev/null || source /usr/share/modules/init/bash 2>/dev/null || true
+source /cm/local/apps/environment-modules/current/init/bash 2>/dev/null || source /etc/profile.d/modules.sh 2>/dev/null || true
 {module_lines}
 
 cd "{hpc.remote_dir}"
