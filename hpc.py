@@ -225,5 +225,6 @@ def _build_sbatch_script(hpc: HPCConfig, remote_audio: str, remote_results: str)
 {module_lines}
 
 cd "{hpc.remote_dir}"
+export PATH="{hpc.remote_dir}:$PATH"
 {hpc.python} cli.py {cli_args}
 """
