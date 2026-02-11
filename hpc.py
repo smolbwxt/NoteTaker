@@ -13,9 +13,8 @@ class HPCConfig:
     user: str
     remote_dir: str          # e.g. /scratch/user/notetaker
     partition: str = "gpu"
-    gres: str = "gpu:1"
+    nodes: int = 1
     time: str = "01:00:00"
-    mem: str = "16G"
     modules: str = ""        # space-separated module names
     python: str = "python3"
     diarize: bool = True
@@ -28,9 +27,8 @@ class HPCConfig:
             user=cfg.get("hpc_user", ""),
             remote_dir=cfg.get("hpc_remote_dir", ""),
             partition=cfg.get("hpc_partition", "gpu"),
-            gres=cfg.get("hpc_gres", "gpu:1"),
+            nodes=cfg.get("hpc_nodes", 1),
             time=cfg.get("hpc_time", "01:00:00"),
-            mem=cfg.get("hpc_mem", "16G"),
             modules=cfg.get("hpc_modules", ""),
             python=cfg.get("hpc_python", "python3"),
             diarize=cfg.get("hpc_diarize", True),
@@ -217,8 +215,7 @@ def _build_sbatch_script(hpc: HPCConfig, remote_audio: str, remote_results: str)
     return f"""#!/bin/bash
 #SBATCH --job-name=notetaker
 #SBATCH --partition={hpc.partition}
-#SBATCH --gres={hpc.gres}
-#SBATCH --mem={hpc.mem}
+#SBATCH -N {hpc.nodes}
 #SBATCH --time={hpc.time}
 #SBATCH --output={hpc.remote_dir}/slurm_%j.log
 

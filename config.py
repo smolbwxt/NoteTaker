@@ -21,9 +21,8 @@ DEFAULTS = {
     "hpc_user": "",             # SSH username
     "hpc_remote_dir": "",       # e.g. "/scratch/user/notetaker"
     "hpc_partition": "gpu",
-    "hpc_gres": "gpu:1",
+    "hpc_nodes": 1,
     "hpc_time": "01:00:00",
-    "hpc_mem": "16G",
     "hpc_modules": "",          # e.g. "cuda python" (space-separated)
     "hpc_python": "python3",    # Python command on the cluster
     "hpc_diarize": True,

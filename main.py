@@ -1117,9 +1117,8 @@ class HPCSettingsDialog(tk.Toplevel):
         ("hpc_user",      "Username:",      "SSH username"),
         ("hpc_remote_dir","Remote dir:",     "e.g. /scratch/user/notetaker"),
         ("hpc_partition",  "Partition:",     "e.g. gpu"),
-        ("hpc_gres",      "GPU (--gres):",  "e.g. gpu:1, gpu:a100:1"),
+        ("hpc_nodes",     "Nodes (-N):",    "e.g. 1"),
         ("hpc_time",      "Time limit:",    "e.g. 01:00:00"),
-        ("hpc_mem",       "Memory:",        "e.g. 16G"),
         ("hpc_modules",   "Modules:",       "space-separated, e.g. cuda python"),
         ("hpc_python",    "Python cmd:",    "e.g. python3"),
         ("hpc_model",     "Whisper model:", "tiny/base/small/medium/large-v2"),
@@ -1199,6 +1198,11 @@ class HPCSettingsDialog(tk.Toplevel):
     def _save(self):
         updates = {key: var.get().strip() for key, var in self._vars.items()}
         updates["hpc_diarize"] = self._diarize_var.get()
+        # Store nodes as int
+        try:
+            updates["hpc_nodes"] = int(updates.get("hpc_nodes", 1))
+        except (ValueError, TypeError):
+            updates["hpc_nodes"] = 1
         self.cfg.set_many(updates)
         self.destroy()
 
