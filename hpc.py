@@ -225,5 +225,8 @@ source /cm/local/apps/environment-modules/current/init/bash 2>/dev/null || sourc
 
 cd "{hpc.remote_dir}"
 export PATH="{hpc.remote_dir}:$PATH"
+if [ -f venv/bin/activate ]; then
+    source venv/bin/activate
+fi
 {hpc.python} cli.py {cli_args}
 """
