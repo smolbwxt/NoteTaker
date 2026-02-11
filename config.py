@@ -10,11 +10,23 @@ DEFAULTS = {
     "hf_token": "",
     "model": "medium",
     "model_cache_dir": "",  # Custom cache dir for models; blank = default ~/.cache
+    "deps_dir": "",         # Directory containing .whl files for offline pip install
     "ollama_url": "http://localhost:11434",
     "ollama_model": "llama3.2:3b",
     "default_export_dir": os.path.join(_SCRIPT_DIR, "exports"),
     "audio_device_loopback": "",
     "audio_device_mic": "",
+    # HPC / SLURM settings
+    "hpc_host": "",             # e.g. "hpc.university.edu"
+    "hpc_user": "",             # SSH username
+    "hpc_remote_dir": "",       # e.g. "/scratch/user/notetaker"
+    "hpc_partition": "gpu",
+    "hpc_nodes": 1,
+    "hpc_time": "01:00:00",
+    "hpc_modules": "",          # e.g. "cuda python" (space-separated)
+    "hpc_python": "python3",    # Python command on the cluster
+    "hpc_diarize": True,
+    "hpc_model": "medium",
 }
 
 

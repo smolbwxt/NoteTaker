@@ -45,6 +45,7 @@ from transcriber import WhisperXTranscriber, TranscriptionResult
 from summarizer import OllamaSummarizer, MeetingSummary, build_clipboard_prompt
 from exporter import DocxExporter
 from speaker_db import SpeakerDB
+from hpc import HPCConfig, submit_job, check_connection, check_job_status, download_results
 
 # Ensure ffmpeg next to script is on PATH
 _script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -283,12 +284,46 @@ class NoteTakerApp:
         )
         self.copy_prompt_btn.pack(side="left", padx=(10, 0))
 
+        self.name_speakers_btn = ttk.Button(
+            btn_frame, text="Name Speakers", command=self._show_speaker_naming, state="disabled"
+        )
+        self.name_speakers_btn.pack(side="left", padx=(10, 0))
+
+        # --- HPC ---
+        hpc_frame = ttk.LabelFrame(self.root, text="HPC (GPU Cluster)", padding=10)
+        hpc_frame.pack(fill="x", padx=15, pady=5)
+
+        self.hpc_submit_btn = ttk.Button(
+            hpc_frame, text="Submit to HPC", command=self._hpc_submit
+        )
+        self.hpc_submit_btn.pack(side="left")
+
+        self.hpc_status_btn = ttk.Button(
+            hpc_frame, text="Check Job", command=self._hpc_check_job, state="disabled"
+        )
+        self.hpc_status_btn.pack(side="left", padx=(10, 0))
+
+        self.hpc_download_btn = ttk.Button(
+            hpc_frame, text="Download Results", command=self._hpc_download_results
+        )
+        self.hpc_download_btn.pack(side="left", padx=(10, 0))
+
+        ttk.Button(
+            hpc_frame, text="HPC Settings...", command=self._hpc_settings
+        ).pack(side="right")
+
+        self.hpc_status_label = ttk.Label(hpc_frame, text="", foreground="gray")
+        self.hpc_status_label.pack(side="left", padx=(15, 0))
+
+        # Track last submitted job
+        self._hpc_job_id: str = ""
+
         # --- Status ---
         status_frame = ttk.Frame(self.root)
         status_frame.pack(fill="x", padx=15, pady=(5, 0))
 
         self.progress = ttk.Progressbar(
-            status_frame, mode="indeterminate", length=200
+            status_frame, mode="determinate", length=200, maximum=100
         )
         self.progress.pack(side="left")
 
@@ -437,7 +472,7 @@ class NoteTakerApp:
         self._set_controls_enabled(False)
         self._set_text(self.transcript_box, "")
         self._set_text(self.summary_box, "")
-        self.progress.start(15)
+        self.progress["value"] = 0
         self.status_text.set("Starting pipeline...")
 
         thread = threading.Thread(
@@ -524,7 +559,7 @@ class NoteTakerApp:
             return
 
         def _done():
-            self.progress.stop()
+            self.progress["value"] = 100
             self._is_processing = False
             self._set_controls_enabled(True)
             self.notebook.select(1)  # Switch to Summary tab
@@ -539,8 +574,9 @@ class NoteTakerApp:
 
             messagebox.showinfo("Export Complete", f"Files saved:\n\n{saved}")
 
-            # Offer to name speakers if voice prints were extracted
+            # Enable speaker naming if voice prints were extracted
             if self._current_result and self._current_result.speaker_embeddings:
+                self.name_speakers_btn.config(state="normal")
                 self._show_speaker_naming()
 
         self.root.after(0, _done)
@@ -583,7 +619,7 @@ class NoteTakerApp:
         self._is_processing = True
         self._set_controls_enabled(False)
         self._set_text(self.transcript_box, "")
-        self.progress.start(15)
+        self.progress["value"] = 0
         self.status_text.set("Loading model...")
 
         thread = threading.Thread(
@@ -610,7 +646,7 @@ class NoteTakerApp:
 
             def _done():
                 self._set_text(self.transcript_box, transcript_text)
-                self.progress.stop()
+                self.progress["value"] = 100
                 self.status_text.set(f"Transcribed in {result.elapsed_time:.1f}s")
                 self._is_processing = False
                 self._set_controls_enabled(True)
@@ -619,8 +655,9 @@ class NoteTakerApp:
                 self.copy_btn.config(state="normal")
                 self.copy_prompt_btn.config(state="normal")
 
-                # Offer to name speakers if voice prints were extracted
+                # Enable speaker naming if voice prints were extracted
                 if result.speaker_embeddings:
+                    self.name_speakers_btn.config(state="normal")
                     self._show_speaker_naming()
 
             self.root.after(0, _done)
@@ -641,7 +678,7 @@ class NoteTakerApp:
 
         self._is_processing = True
         self._set_controls_enabled(False)
-        self.progress.start(15)
+        self.progress["value"] = 0
         self.status_text.set("Starting summarization...")
 
         thread = threading.Thread(target=self._summarize_worker, daemon=True)
@@ -662,7 +699,7 @@ class NoteTakerApp:
 
             def _done():
                 self._set_text(self.summary_box, summary.raw_summary)
-                self.progress.stop()
+                self.progress["value"] = 100
                 self.status_text.set("Summarization complete!")
                 self._is_processing = False
                 self._set_controls_enabled(True)
@@ -758,13 +795,36 @@ class NoteTakerApp:
             self.save_btn,
             self.copy_btn,
             self.copy_prompt_btn,
+            self.name_speakers_btn,
         ):
             btn.config(state=state)
         # Record button always available (to stop)
         self.record_btn.config(state="normal")
 
+    # Progress step mapping — maps status message prefixes to bar percentages
+    _PROGRESS_STEPS = {
+        "Loading":       5,
+        "Loading audio": 10,
+        "Transcribing":  50,
+        "Aligning":      65,
+        "Running speaker": 80,
+        "Extracting":    95,
+        "Checking Ollama": 70,
+        "Summarizing":   80,
+        "Parsing":       95,
+        "Exporting":     90,
+        "Starting":      0,
+    }
+
     def _update_status(self, msg: str):
-        self.root.after(0, lambda: self.status_text.set(msg))
+        def _do():
+            self.status_text.set(msg)
+            # Advance progress bar based on known pipeline stages
+            for prefix, pct in self._PROGRESS_STEPS.items():
+                if msg.startswith(prefix):
+                    self.progress["value"] = pct
+                    break
+        self.root.after(0, _do)
 
     @staticmethod
     def _set_text(widget, text: str):
@@ -776,7 +836,7 @@ class NoteTakerApp:
 
     def _on_error(self, msg: str):
         def _do():
-            self.progress.stop()
+            self.progress["value"] = 0
             self.status_text.set("Error")
             self._is_processing = False
             self._set_controls_enabled(True)
@@ -873,11 +933,278 @@ class NoteTakerApp:
         )
         self.status_text.set("Speaker names updated!")
 
+    # ==================================================================
+    # HPC Submission
+    # ==================================================================
+
+    def _get_hpc_config(self) -> HPCConfig:
+        return HPCConfig.from_config(self.cfg)
+
+    def _hpc_submit(self):
+        """Upload audio and submit a SLURM job to the HPC cluster."""
+        # Determine audio file to submit
+        audio_path = self.file_path.get()
+        if not audio_path or not os.path.isfile(audio_path):
+            messagebox.showwarning(
+                "No audio file",
+                "Record or select an audio file first.",
+            )
+            return
+
+        hpc = self._get_hpc_config()
+        if not hpc.is_configured:
+            messagebox.showwarning(
+                "HPC not configured",
+                "Set your HPC connection details first.\n\n"
+                'Click "HPC Settings..." to configure.',
+            )
+            self._hpc_settings()
+            return
+
+        # Test connection first
+        self.hpc_status_label.config(text="Connecting...")
+        self.root.update_idletasks()
+
+        self._set_controls_enabled(False)
+        self.hpc_submit_btn.config(state="disabled")
+
+        def _worker():
+            try:
+                if not check_connection(hpc):
+                    self.root.after(0, lambda: self._hpc_error(
+                        f"Cannot connect to {hpc.user}@{hpc.host}\n\n"
+                        "Check your SSH key setup and HPC settings."
+                    ))
+                    return
+
+                job_id = submit_job(
+                    hpc, audio_path,
+                    progress=lambda msg: self.root.after(
+                        0, lambda m=msg: self.hpc_status_label.config(text=m)
+                    ),
+                )
+                self._hpc_job_id = job_id
+
+                def _done():
+                    self._set_controls_enabled(True)
+                    self.hpc_submit_btn.config(state="normal")
+                    self.hpc_status_btn.config(state="normal")
+                    self.hpc_status_label.config(
+                        text=f"Job {job_id} submitted!", foreground="green"
+                    )
+                    messagebox.showinfo(
+                        "Job Submitted",
+                        f"SLURM job {job_id} submitted to {hpc.host}\n\n"
+                        f"Audio: {os.path.basename(audio_path)}\n"
+                        f"Model: {hpc.model}\n"
+                        f'Diarize: {"yes" if hpc.diarize else "no"}\n\n'
+                        'Click "Check Job" to monitor progress,\n'
+                        '"Download Results" when complete.',
+                    )
+                self.root.after(0, _done)
+
+            except Exception as e:
+                self.root.after(0, lambda: self._hpc_error(str(e)))
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _hpc_check_job(self):
+        """Check the status of the last submitted job."""
+        if not self._hpc_job_id:
+            return
+
+        hpc = self._get_hpc_config()
+        self.hpc_status_label.config(text="Checking...", foreground="gray")
+        self.root.update_idletasks()
+
+        def _worker():
+            try:
+                state = check_job_status(hpc, self._hpc_job_id)
+                color = {
+                    "COMPLETED": "green",
+                    "RUNNING": "dodgerblue",
+                    "PENDING": "orange",
+                    "FAILED": "red",
+                }.get(state, "gray")
+
+                def _done():
+                    self.hpc_status_label.config(
+                        text=f"Job {self._hpc_job_id}: {state}", foreground=color
+                    )
+                    if state == "COMPLETED":
+                        if messagebox.askyesno(
+                            "Job Complete",
+                            f"Job {self._hpc_job_id} finished!\n\n"
+                            "Download results now?",
+                        ):
+                            self._hpc_download_results()
+                self.root.after(0, _done)
+
+            except Exception as e:
+                self.root.after(0, lambda: self.hpc_status_label.config(
+                    text=f"Check failed: {e}", foreground="red"
+                ))
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _hpc_download_results(self):
+        """Download result files from the cluster."""
+        hpc = self._get_hpc_config()
+        if not hpc.is_configured:
+            return
+
+        self.hpc_status_label.config(text="Downloading...", foreground="gray")
+        self.root.update_idletasks()
+
+        def _worker():
+            try:
+                local_dir = self.cfg.get("default_export_dir", EXPORTS_DIR)
+                files = download_results(
+                    hpc, local_dir,
+                    progress=lambda msg: self.root.after(
+                        0, lambda m=msg: self.hpc_status_label.config(text=m)
+                    ),
+                )
+
+                def _done():
+                    if files:
+                        self.hpc_status_label.config(
+                            text=f"Downloaded {len(files)} file(s)",
+                            foreground="green",
+                        )
+                        messagebox.showinfo(
+                            "Results Downloaded",
+                            f"Downloaded {len(files)} file(s) to:\n{local_dir}",
+                        )
+                    else:
+                        self.hpc_status_label.config(
+                            text="No results found", foreground="orange"
+                        )
+                self.root.after(0, _done)
+
+            except Exception as e:
+                self.root.after(0, lambda: self._hpc_error(str(e)))
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _hpc_settings(self):
+        """Open the HPC settings dialog."""
+        dialog = HPCSettingsDialog(self.root, self.cfg)
+        self.root.wait_window(dialog)
+
+    def _hpc_error(self, msg: str):
+        self._set_controls_enabled(True)
+        self.hpc_submit_btn.config(state="normal")
+        self.hpc_status_label.config(text="Error", foreground="red")
+        messagebox.showerror("HPC Error", msg)
+
     def _save_config(self):
         self.cfg.set_many({
             "hf_token": self.hf_token.get().strip(),
             "model": self.model_choice.get(),
         })
+
+
+# ==================================================================
+# HPC Settings Dialog
+# ==================================================================
+
+class HPCSettingsDialog(tk.Toplevel):
+    """Modal dialog for configuring HPC / SLURM connection settings."""
+
+    _FIELDS = [
+        ("hpc_host",      "Hostname:",      "e.g. hpc.university.edu"),
+        ("hpc_user",      "Username:",      "SSH username"),
+        ("hpc_remote_dir","Remote dir:",     "e.g. /scratch/user/notetaker"),
+        ("hpc_partition",  "Partition:",     "e.g. gpu"),
+        ("hpc_nodes",     "Nodes (-N):",    "e.g. 1"),
+        ("hpc_time",      "Time limit:",    "e.g. 01:00:00"),
+        ("hpc_modules",   "Modules:",       "space-separated, e.g. cuda python"),
+        ("hpc_python",    "Python cmd:",    "e.g. python3"),
+        ("hpc_model",     "Whisper model:", "tiny/base/small/medium/large-v2"),
+    ]
+
+    def __init__(self, parent, cfg):
+        super().__init__(parent)
+        self.title("HPC Settings")
+        self.cfg = cfg
+        self.transient(parent)
+        self.grab_set()
+        self.resizable(False, False)
+
+        frame = ttk.Frame(self, padding=15)
+        frame.pack(fill="both")
+
+        self._vars: dict[str, tk.StringVar] = {}
+        for i, (key, label, hint) in enumerate(self._FIELDS):
+            ttk.Label(frame, text=label).grid(row=i, column=0, sticky="w", pady=2)
+            var = tk.StringVar(value=str(cfg.get(key, "")))
+            entry = ttk.Entry(frame, textvariable=var, width=35)
+            entry.grid(row=i, column=1, padx=(10, 5), pady=2)
+            ttk.Label(frame, text=hint, foreground="gray").grid(
+                row=i, column=2, sticky="w", padx=(0, 5)
+            )
+            self._vars[key] = var
+
+        # Diarize checkbox
+        row = len(self._FIELDS)
+        self._diarize_var = tk.BooleanVar(value=cfg.get("hpc_diarize", True))
+        ttk.Checkbutton(
+            frame, text="Enable diarization on HPC", variable=self._diarize_var
+        ).grid(row=row, column=0, columnspan=2, sticky="w", pady=(10, 5))
+
+        # Buttons
+        btn_frame = ttk.Frame(self)
+        btn_frame.pack(pady=10)
+        ttk.Button(btn_frame, text="Test Connection", command=self._test).pack(
+            side="left", padx=5
+        )
+        ttk.Button(btn_frame, text="Save", command=self._save).pack(
+            side="left", padx=5
+        )
+        ttk.Button(btn_frame, text="Cancel", command=self.destroy).pack(
+            side="left", padx=5
+        )
+
+        self._status = ttk.Label(self, text="", foreground="gray")
+        self._status.pack(pady=(0, 10))
+
+        self.protocol("WM_DELETE_WINDOW", self.destroy)
+        self.update_idletasks()
+        x = parent.winfo_x() + (parent.winfo_width() - self.winfo_width()) // 2
+        y = parent.winfo_y() + (parent.winfo_height() - self.winfo_height()) // 2
+        self.geometry(f"+{x}+{y}")
+
+    def _test(self):
+        self._status.config(text="Testing connection...", foreground="gray")
+        self.update_idletasks()
+        hpc = HPCConfig(
+            host=self._vars["hpc_host"].get().strip(),
+            user=self._vars["hpc_user"].get().strip(),
+            remote_dir=self._vars["hpc_remote_dir"].get().strip(),
+        )
+        if not hpc.host or not hpc.user:
+            self._status.config(text="Enter hostname and username first", foreground="red")
+            return
+
+        def _worker():
+            ok = check_connection(hpc)
+            self.after(0, lambda: self._status.config(
+                text="Connected!" if ok else f"Connection failed to {hpc.host}",
+                foreground="green" if ok else "red",
+            ))
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _save(self):
+        updates = {key: var.get().strip() for key, var in self._vars.items()}
+        updates["hpc_diarize"] = self._diarize_var.get()
+        # Store nodes as int
+        try:
+            updates["hpc_nodes"] = int(updates.get("hpc_nodes", 1))
+        except (ValueError, TypeError):
+            updates["hpc_nodes"] = 1
+        self.cfg.set_many(updates)
+        self.destroy()
 
 
 # ==================================================================

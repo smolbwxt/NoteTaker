@@ -248,10 +248,14 @@ class DualAudioRecorder:
             trim = len(audio) - (len(audio) % channels)
             audio = audio[:trim].reshape(-1, channels).mean(axis=1).astype(np.int16)
 
-        # Resample to TARGET_RATE
+        # Resample to TARGET_RATE with proper anti-aliasing
         if source_rate != DualAudioRecorder.TARGET_RATE:
-            num_samples = int(len(audio) * DualAudioRecorder.TARGET_RATE / source_rate)
-            indices = np.linspace(0, len(audio) - 1, num_samples).astype(int)
-            audio = audio[indices]
+            from math import gcd
+            from scipy.signal import resample_poly
+
+            g = gcd(source_rate, DualAudioRecorder.TARGET_RATE)
+            up = DualAudioRecorder.TARGET_RATE // g
+            down = source_rate // g
+            audio = resample_poly(audio.astype(np.float64), up, down).astype(np.int16)
 
         return audio

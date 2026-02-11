@@ -3,8 +3,9 @@
 .transcriber_config.json
 .notetaker_speakers.json
 
-# Model bundles (large binary — distributed via GitHub Releases)
+# Model bundles and offline dependencies (large binaries)
 notetaker_models.zip
+notetaker_deps/
 
 # Recordings and exports
 recordings/
