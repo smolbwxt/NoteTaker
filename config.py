@@ -24,7 +24,7 @@ DEFAULTS = {
     "hpc_nodes": 1,
     "hpc_time": "01:00:00",
     "hpc_modules": "",          # e.g. "cuda python" (space-separated)
-    "hpc_python": "python3",    # Python command on the cluster
+    "hpc_python": "python3.11",  # Python command on the cluster
     "hpc_diarize": True,
     "hpc_model": "medium",
 }
