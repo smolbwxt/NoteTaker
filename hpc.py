@@ -1,4 +1,5 @@
 """HPC job submission via SSH/SCP (uses Windows built-in OpenSSH)."""
+from __future__ import annotations
 
 import os
 import subprocess

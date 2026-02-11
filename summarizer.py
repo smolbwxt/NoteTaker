@@ -1,4 +1,5 @@
 """Meeting transcript summarization — clipboard prompt or local Ollama."""
+from __future__ import annotations
 
 import re
 import requests

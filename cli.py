@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+from __future__ import annotations
+
 """Headless CLI for NoteTaker — run on HPC or any machine without a GUI.
 
 Examples:

@@ -1,4 +1,5 @@
 """Persistent speaker voice database for cross-meeting recognition."""
+from __future__ import annotations
 
 import json
 import os

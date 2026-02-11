@@ -1,4 +1,5 @@
 """WhisperX transcription with optional speaker diarization."""
+from __future__ import annotations
 
 import os
 import time
