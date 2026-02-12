@@ -78,6 +78,7 @@ class NoteTakerApp:
         self.max_speakers = tk.StringVar(value="")
         self.loopback_device_var = tk.StringVar()
         self.mic_device_var = tk.StringVar()
+        self.process_on_hpc = tk.BooleanVar(value=self.cfg.get("process_on_hpc", False))
 
         # -- State --
         self._is_recording = False
@@ -293,6 +294,12 @@ class NoteTakerApp:
         hpc_frame = ttk.LabelFrame(self.root, text="HPC (GPU Cluster)", padding=10)
         hpc_frame.pack(fill="x", padx=15, pady=5)
 
+        ttk.Checkbutton(
+            hpc_frame, text="Process on HPC",
+            variable=self.process_on_hpc,
+            command=self._save_hpc_toggle,
+        ).pack(side="left", padx=(0, 10))
+
         self.hpc_submit_btn = ttk.Button(
             hpc_frame, text="Submit to HPC", command=self._hpc_submit
         )
@@ -453,7 +460,10 @@ class NoteTakerApp:
                 return
 
             self.file_path.set(wav_path)
-            self._start_full_pipeline(wav_path)
+            if self.process_on_hpc.get():
+                self._hpc_submit()
+            else:
+                self._start_full_pipeline(wav_path)
 
     def _tick_timer(self):
         if not self._is_recording:
@@ -604,6 +614,10 @@ class NoteTakerApp:
         path = self.file_path.get()
         if not path or not os.path.isfile(path):
             messagebox.showwarning("No file", "Please select or record an audio file first.")
+            return
+
+        if self.process_on_hpc.get():
+            self._hpc_submit()
             return
 
         offline = os.environ.get("HF_HUB_OFFLINE") == "1"
@@ -1072,6 +1086,31 @@ class NoteTakerApp:
                             text=f"Downloaded {len(files)} file(s)",
                             foreground="green",
                         )
+                        # Load the first transcript into the UI
+                        transcript_file = None
+                        for f in files:
+                            if f.endswith("_transcript.txt"):
+                                transcript_file = f
+                                break
+                        if transcript_file and os.path.isfile(transcript_file):
+                            with open(transcript_file, "r", encoding="utf-8") as fh:
+                                text = fh.read()
+                            self._set_text(self.transcript_box, text)
+                            self.save_btn.config(state="normal")
+                            self.copy_btn.config(state="normal")
+                            self.copy_prompt_btn.config(state="normal")
+
+                        # Load summary prompt if present
+                        prompt_file = None
+                        for f in files:
+                            if f.endswith("_summary_prompt.txt"):
+                                prompt_file = f
+                                break
+                        if prompt_file and os.path.isfile(prompt_file):
+                            with open(prompt_file, "r", encoding="utf-8") as fh:
+                                prompt = fh.read()
+                            self._set_text(self.summary_box, prompt)
+
                         messagebox.showinfo(
                             "Results Downloaded",
                             f"Downloaded {len(files)} file(s) to:\n{local_dir}",
@@ -1097,6 +1136,9 @@ class NoteTakerApp:
         self.hpc_submit_btn.config(state="normal")
         self.hpc_status_label.config(text="Error", foreground="red")
         messagebox.showerror("HPC Error", msg)
+
+    def _save_hpc_toggle(self):
+        self.cfg.set("process_on_hpc", self.process_on_hpc.get())
 
     def _save_config(self):
         self.cfg.set_many({
