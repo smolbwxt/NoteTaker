@@ -13,6 +13,7 @@ Setup:
         ollama pull llama3.2:3b
         ollama serve
 """
+from __future__ import annotations
 
 # PyTorch 2.6+ defaults weights_only=True in torch.load, which breaks
 # whisperx/pyannote checkpoint loading.  This env var restores the old default.

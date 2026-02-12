@@ -1,4 +1,5 @@
 """Dual audio recording: WASAPI loopback (system audio) + microphone."""
+from __future__ import annotations
 
 import wave
 import threading
