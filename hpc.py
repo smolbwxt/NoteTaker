@@ -228,5 +228,11 @@ export PATH="{hpc.remote_dir}:$PATH"
 if [ -f venv/bin/activate ]; then
     source venv/bin/activate
 fi
+# Prioritise torch's bundled CUDA libs over system ones
+TORCH_LIB=$(python3.11 -c "import torch,os;print(os.path.join(os.path.dirname(torch.__file__),'lib'))" 2>/dev/null)
+NVIDIA_LIB=$(python3.11 -c "import nvidia.cudnn.lib as _l,os;print(os.path.dirname(_l.__file__))" 2>/dev/null)
+if [ -n "$TORCH_LIB" ]; then
+    export LD_LIBRARY_PATH="$TORCH_LIB:${{NVIDIA_LIB:-}}:$LD_LIBRARY_PATH"
+fi
 {hpc.python} cli.py {cli_args}
 """
