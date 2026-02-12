@@ -913,16 +913,36 @@ class NoteTakerApp:
     # ==================================================================
 
     def _show_speaker_naming(self):
-        """Match speaker embeddings against DB and show naming dialog."""
-        if not self._current_result or not self._current_result.speaker_embeddings:
-            return
+        """Match speaker embeddings against DB and show naming dialog.
 
-        embeddings = self._current_result.speaker_embeddings
+        Works in two modes:
+        1. With embeddings (local transcription): suggests names via voice matching
+        2. Without embeddings (HPC results): parses SPEAKER_XX labels from text
+           and does a simple find/replace
+        """
+        import re
 
-        # Pre-match against stored voices
-        suggestions = {}
-        for label, emb in embeddings.items():
-            suggestions[label] = self._speaker_db.match(emb) or ""
+        has_embeddings = (
+            self._current_result
+            and self._current_result.speaker_embeddings
+        )
+
+        if has_embeddings:
+            embeddings = self._current_result.speaker_embeddings
+            suggestions = {}
+            for label, emb in embeddings.items():
+                suggestions[label] = self._speaker_db.match(emb) or ""
+        else:
+            # Parse speaker labels from transcript text (HPC results)
+            text = self.transcript_box.get("1.0", "end-1c")
+            labels = sorted(set(re.findall(r"SPEAKER_\d+", text)))
+            if not labels:
+                messagebox.showinfo(
+                    "No Speakers",
+                    "No SPEAKER_XX labels found in the transcript.",
+                )
+                return
+            suggestions = {label: "" for label in labels}
 
         dialog = SpeakerNameDialog(self.root, suggestions)
         self.root.wait_window(dialog)
@@ -930,22 +950,31 @@ class NoteTakerApp:
         if not dialog.result:
             return
 
-        # Replace speaker labels in segments
-        for seg in self._current_result.segments:
-            old = seg.get("speaker", "")
-            new_name = dialog.result.get(old, "")
-            if new_name:
-                seg["speaker"] = new_name
+        if has_embeddings:
+            # Replace speaker labels in segments
+            for seg in self._current_result.segments:
+                old = seg.get("speaker", "")
+                new_name = dialog.result.get(old, "")
+                if new_name:
+                    seg["speaker"] = new_name
 
-        # Save embeddings to DB
-        for label, name in dialog.result.items():
-            if name and label in embeddings:
-                self._speaker_db.add_or_update(name, embeddings[label])
+            # Save embeddings to DB
+            for label, name in dialog.result.items():
+                if name and label in self._current_result.speaker_embeddings:
+                    self._speaker_db.add_or_update(name, self._current_result.speaker_embeddings[label])
 
-        # Refresh transcript display with real names
-        self._set_text(
-            self.transcript_box, self._current_result.format_as_text()
-        )
+            # Refresh transcript display with real names
+            self._set_text(
+                self.transcript_box, self._current_result.format_as_text()
+            )
+        else:
+            # Text-only mode: find/replace speaker labels in the text box
+            text = self.transcript_box.get("1.0", "end-1c")
+            for label, name in dialog.result.items():
+                if name:
+                    text = text.replace(label, name)
+            self._set_text(self.transcript_box, text)
+
         self.status_text.set("Speaker names updated!")
 
     # ==================================================================
@@ -1100,6 +1129,7 @@ class NoteTakerApp:
                             self.save_btn.config(state="normal")
                             self.copy_btn.config(state="normal")
                             self.copy_prompt_btn.config(state="normal")
+                            self.name_speakers_btn.config(state="normal")
 
                         # Load summary prompt if present
                         prompt_file = None
