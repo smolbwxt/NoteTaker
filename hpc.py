@@ -228,11 +228,5 @@ export PATH="{hpc.remote_dir}:$PATH"
 if [ -f venv/bin/activate ]; then
     source venv/bin/activate
 fi
-# Save cuDNN path from modules, then prepend torch's bundled CUDA libs
-SAVED_LD="$LD_LIBRARY_PATH"
-TORCH_LIB=$({hpc.python} -c "import torch,os;print(os.path.join(os.path.dirname(torch.__file__),'lib'))" 2>/dev/null)
-if [ -n "$TORCH_LIB" ]; then
-    export LD_LIBRARY_PATH="$TORCH_LIB:$SAVED_LD"
-fi
 {hpc.python} cli.py {cli_args}
 """
