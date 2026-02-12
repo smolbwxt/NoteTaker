@@ -43,7 +43,7 @@ from datetime import datetime
 from config import ConfigManager
 from recorder import DualAudioRecorder
 from transcriber import WhisperXTranscriber, TranscriptionResult
-from summarizer import OllamaSummarizer, MeetingSummary, build_clipboard_prompt
+from summarizer import build_clipboard_prompt
 from exporter import DocxExporter
 from speaker_db import SpeakerDB
 from hpc import HPCConfig, submit_job, check_connection, check_job_status, download_results
@@ -88,7 +88,6 @@ class NoteTakerApp:
         self._timer_id = None
         self._recorder: DualAudioRecorder | None = None
         self._current_result: TranscriptionResult | None = None
-        self._current_summary: MeetingSummary | None = None
 
         # Device maps: display name -> device index
         self._loopback_map: dict[str, int] = {}
@@ -260,16 +259,6 @@ class NoteTakerApp:
             btn_frame, text="Transcribe Only", command=self._start_transcription_only
         )
         self.transcribe_btn.pack(side="left")
-
-        self.summarize_btn = ttk.Button(
-            btn_frame, text="Summarize", command=self._start_summarization, state="disabled"
-        )
-        self.summarize_btn.pack(side="left", padx=(10, 0))
-
-        self.export_btn = ttk.Button(
-            btn_frame, text="Export to Word", command=self._export_notes, state="disabled"
-        )
-        self.export_btn.pack(side="left", padx=(10, 0))
 
         self.save_btn = ttk.Button(
             btn_frame, text="Save Transcript", command=self._save_transcript, state="disabled"
@@ -518,52 +507,21 @@ class NoteTakerApp:
             self._on_error(f"Transcription failed:\n\n{e}")
             return
 
-        # --- Step 2: Summarize (Ollama if available, otherwise clipboard prompt) ---
-        summarizer = OllamaSummarizer(
-            ollama_url=self.cfg.get("ollama_url", "http://localhost:11434"),
-            model=self.cfg.get("ollama_model", "llama3.2:3b"),
-        )
+        # --- Step 2: Copy summary prompt to clipboard ---
+        self._update_status("Copying summary prompt to clipboard...")
+        self._clipboard_prompt_fallback(transcript_text)
 
-        if summarizer.check_available():
-            try:
-                summary = summarizer.summarize(
-                    transcript=transcript_text,
-                    progress_callback=self._update_status,
-                )
-                self._current_summary = summary
-                self.root.after(0, lambda: self._set_text(self.summary_box, summary.raw_summary))
-            except Exception as e:
-                self._current_summary = None
-                self._update_status("Ollama failed — copying prompt to clipboard instead...")
-                self._clipboard_prompt_fallback(transcript_text)
-        else:
-            # No Ollama — use clipboard prompt as primary path
-            self._current_summary = None
-            self._update_status("Ollama not found — copying summary prompt to clipboard...")
-            self._clipboard_prompt_fallback(transcript_text)
-
-        # --- Step 3: Export ---
+        # --- Step 3: Export transcript ---
         self._auto_export(audio_path)
 
     def _auto_export(self, audio_path: str):
-        """Export .docx + .txt to the exports directory."""
-        self._update_status("Exporting meeting notes...")
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        """Export transcript .txt to the exports directory."""
+        self._update_status("Exporting transcript...")
         base = os.path.splitext(os.path.basename(audio_path))[0]
-
-        docx_path = os.path.join(EXPORTS_DIR, f"{base}_notes.docx")
         txt_path = os.path.join(EXPORTS_DIR, f"{base}_transcript.txt")
 
         try:
-            exporter = DocxExporter()
             transcript_text = self._current_result.format_as_text() if self._current_result else ""
-
-            if self._current_summary:
-                exporter.export_meeting_notes(
-                    summary=self._current_summary,
-                    transcript=transcript_text,
-                    output_path=docx_path,
-                )
             DocxExporter.save_transcript_txt(transcript_text, txt_path)
         except Exception as e:
             self._on_error(f"Export failed:\n{e}")
@@ -575,15 +533,12 @@ class NoteTakerApp:
             self._set_controls_enabled(True)
             self.notebook.select(1)  # Switch to Summary tab
 
-            saved = f"Transcript: {txt_path}"
-            if self._current_summary:
-                saved = f"Notes: {docx_path}\n{saved}"
-                self.status_text.set("Pipeline complete — notes exported!")
-            else:
-                saved += "\n\nSummary prompt copied to clipboard — paste into ChatGPT."
-                self.status_text.set("Pipeline complete — paste prompt into ChatGPT for summary.")
-
-            messagebox.showinfo("Export Complete", f"Files saved:\n\n{saved}")
+            self.status_text.set("Pipeline complete — paste summary prompt into GPT.")
+            messagebox.showinfo(
+                "Export Complete",
+                f"Transcript: {txt_path}\n\n"
+                "Summary prompt copied to clipboard — paste into GPT.",
+            )
 
             # Enable speaker naming if voice prints were extracted
             if self._current_result and self._current_result.speaker_embeddings:
@@ -665,7 +620,6 @@ class NoteTakerApp:
                 self.status_text.set(f"Transcribed in {result.elapsed_time:.1f}s")
                 self._is_processing = False
                 self._set_controls_enabled(True)
-                self.summarize_btn.config(state="normal")
                 self.save_btn.config(state="normal")
                 self.copy_btn.config(state="normal")
                 self.copy_prompt_btn.config(state="normal")
@@ -681,93 +635,6 @@ class NoteTakerApp:
             self._on_error(f"Import error:\n\n{e}\n\n(pip install whisperx)")
         except Exception as e:
             self._on_error(f"Transcription failed:\n\n{e}")
-
-    # ==================================================================
-    # Summarize (standalone button)
-    # ==================================================================
-
-    def _start_summarization(self):
-        if not self._current_result:
-            messagebox.showwarning("No transcript", "Run transcription first.")
-            return
-
-        self._is_processing = True
-        self._set_controls_enabled(False)
-        self.progress["value"] = 0
-        self.status_text.set("Starting summarization...")
-
-        thread = threading.Thread(target=self._summarize_worker, daemon=True)
-        thread.start()
-
-    def _summarize_worker(self):
-        try:
-            summarizer = OllamaSummarizer(
-                ollama_url=self.cfg.get("ollama_url", "http://localhost:11434"),
-                model=self.cfg.get("ollama_model", "llama3.2:3b"),
-            )
-            transcript_text = self._current_result.format_as_text()
-            summary = summarizer.summarize(
-                transcript=transcript_text,
-                progress_callback=self._update_status,
-            )
-            self._current_summary = summary
-
-            def _done():
-                self._set_text(self.summary_box, summary.raw_summary)
-                self.progress["value"] = 100
-                self.status_text.set("Summarization complete!")
-                self._is_processing = False
-                self._set_controls_enabled(True)
-                self.export_btn.config(state="normal")
-                self.notebook.select(1)
-
-            self.root.after(0, _done)
-
-        except Exception as e:
-            self._on_error(f"Summarization failed:\n\n{e}")
-
-    # ==================================================================
-    # Export (standalone button)
-    # ==================================================================
-
-    def _export_notes(self):
-        if not self._current_result:
-            messagebox.showwarning("Nothing to export", "Run transcription first.")
-            return
-
-        base = os.path.splitext(os.path.basename(self.file_path.get() or "meeting"))[0]
-        docx_default = f"{base}_notes.docx"
-
-        path = filedialog.asksaveasfilename(
-            defaultextension=".docx",
-            initialfile=docx_default,
-            initialdir=EXPORTS_DIR,
-            filetypes=[("Word Document", "*.docx"), ("All files", "*.*")],
-        )
-        if not path:
-            return
-
-        try:
-            exporter = DocxExporter()
-            transcript_text = self._current_result.format_as_text()
-
-            if self._current_summary:
-                exporter.export_meeting_notes(
-                    summary=self._current_summary,
-                    transcript=transcript_text,
-                    output_path=path,
-                )
-
-            txt_path = os.path.splitext(path)[0] + "_transcript.txt"
-            DocxExporter.save_transcript_txt(transcript_text, txt_path)
-
-            self.status_text.set(f"Exported to {os.path.basename(path)}")
-            messagebox.showinfo(
-                "Export Complete",
-                f"Files saved:\n\n{path}\n{txt_path}",
-            )
-        except Exception as e:
-            messagebox.showerror("Export Error", str(e))
 
     # ==================================================================
     # UI Helpers
@@ -805,8 +672,6 @@ class NoteTakerApp:
         state = "normal" if enabled else "disabled"
         for btn in (
             self.transcribe_btn,
-            self.summarize_btn,
-            self.export_btn,
             self.save_btn,
             self.copy_btn,
             self.copy_prompt_btn,
@@ -824,9 +689,6 @@ class NoteTakerApp:
         "Aligning":      65,
         "Running speaker": 80,
         "Extracting":    95,
-        "Checking Ollama": 70,
-        "Summarizing":   80,
-        "Parsing":       95,
         "Exporting":     90,
         "Starting":      0,
     }
@@ -1131,20 +993,16 @@ class NoteTakerApp:
                             self.copy_prompt_btn.config(state="normal")
                             self.name_speakers_btn.config(state="normal")
 
-                        # Load summary if present, otherwise fall back to prompt
-                        summary_file = None
+                        # Load summary prompt if present
                         prompt_file = None
                         for f in files:
-                            if f.endswith("_summary.txt") and not f.endswith("_summary_prompt.txt"):
-                                summary_file = f
-                            elif f.endswith("_summary_prompt.txt"):
+                            if f.endswith("_summary_prompt.txt"):
                                 prompt_file = f
-                        best = summary_file or prompt_file
-                        if best and os.path.isfile(best):
-                            with open(best, "r", encoding="utf-8") as fh:
-                                summary_text = fh.read()
-                            self._set_text(self.summary_box, summary_text)
-                            self.notebook.select(1)  # switch to summary tab
+                                break
+                        if prompt_file and os.path.isfile(prompt_file):
+                            with open(prompt_file, "r", encoding="utf-8") as fh:
+                                prompt = fh.read()
+                            self._set_text(self.summary_box, prompt)
 
                         messagebox.showinfo(
                             "Results Downloaded",
