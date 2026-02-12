@@ -73,10 +73,13 @@ def process_file(
     min_speakers: int | None,
     max_speakers: int | None,
     speaker_db,
+    summarize: bool = False,
+    ollama_url: str = "http://localhost:11434",
+    ollama_model: str = "mistral:7b",
 ) -> None:
     """Transcribe (and optionally diarize) a single audio file."""
     from transcriber import WhisperXTranscriber
-    from summarizer import build_clipboard_prompt
+    from summarizer import build_clipboard_prompt, OllamaSummarizer
     from exporter import DocxExporter
 
     basename = os.path.splitext(os.path.basename(audio_path))[0]
@@ -135,6 +138,25 @@ def process_file(
     with open(prompt_path, "w", encoding="utf-8") as f:
         f.write(build_clipboard_prompt(transcript_text))
     status(f"Summary prompt: {prompt_path}")
+
+    # Summarize with Ollama if requested
+    if summarize:
+        summarizer = OllamaSummarizer(
+            ollama_url=ollama_url,
+            model=ollama_model,
+        )
+        if summarizer.check_available():
+            status(f"Summarizing with {ollama_model}...")
+            try:
+                summary = summarizer.summarize(transcript_text, progress_callback=status)
+                summary_path = os.path.join(output_dir, f"{basename}_summary.txt")
+                with open(summary_path, "w", encoding="utf-8") as f:
+                    f.write(summary.raw_summary)
+                status(f"Summary: {summary_path}")
+            except Exception as e:
+                status(f"Summarization failed (skipping): {e}")
+        else:
+            status(f"Ollama not available at {ollama_url} (skipping summarization)")
 
     # Print speaker list
     speakers = sorted(set(
@@ -204,6 +226,20 @@ def main():
         "--no-speaker-db", action="store_true",
         help="Disable speaker voice database matching",
     )
+    parser.add_argument(
+        "--summarize", action="store_true",
+        help="Summarize transcript with Ollama (skips if unavailable)",
+    )
+    parser.add_argument(
+        "--ollama-url",
+        default=_cfg.get("ollama_url", "http://localhost:11434"),
+        help="Ollama server URL (default: http://localhost:11434)",
+    )
+    parser.add_argument(
+        "--ollama-model",
+        default=_cfg.get("ollama_model", "mistral:7b"),
+        help="Ollama model for summarization (default: mistral:7b)",
+    )
 
     args = parser.parse_args()
 
@@ -219,6 +255,8 @@ def main():
     print(f"  Output: {args.output_dir}")
     if args.diarize:
         print(f"  Diarization: enabled")
+    if args.summarize:
+        print(f"  Summarize: {args.ollama_model} @ {args.ollama_url}")
 
     # Load speaker DB
     speaker_db = None
@@ -244,6 +282,9 @@ def main():
                 min_speakers=args.min_speakers,
                 max_speakers=args.max_speakers,
                 speaker_db=speaker_db,
+                summarize=args.summarize,
+                ollama_url=args.ollama_url,
+                ollama_model=args.ollama_model,
             )
         except Exception as e:
             print(f"\n  ERROR processing {audio_path}: {e}", file=sys.stderr)

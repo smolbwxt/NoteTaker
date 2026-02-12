@@ -1131,16 +1131,20 @@ class NoteTakerApp:
                             self.copy_prompt_btn.config(state="normal")
                             self.name_speakers_btn.config(state="normal")
 
-                        # Load summary prompt if present
+                        # Load summary if present, otherwise fall back to prompt
+                        summary_file = None
                         prompt_file = None
                         for f in files:
-                            if f.endswith("_summary_prompt.txt"):
+                            if f.endswith("_summary.txt") and not f.endswith("_summary_prompt.txt"):
+                                summary_file = f
+                            elif f.endswith("_summary_prompt.txt"):
                                 prompt_file = f
-                                break
-                        if prompt_file and os.path.isfile(prompt_file):
-                            with open(prompt_file, "r", encoding="utf-8") as fh:
-                                prompt = fh.read()
-                            self._set_text(self.summary_box, prompt)
+                        best = summary_file or prompt_file
+                        if best and os.path.isfile(best):
+                            with open(best, "r", encoding="utf-8") as fh:
+                                summary_text = fh.read()
+                            self._set_text(self.summary_box, summary_text)
+                            self.notebook.select(1)  # switch to summary tab
 
                         messagebox.showinfo(
                             "Results Downloaded",

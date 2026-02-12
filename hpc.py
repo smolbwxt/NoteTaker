@@ -212,6 +212,7 @@ def _build_sbatch_script(hpc: HPCConfig, remote_audio: str, remote_results: str)
     cli_args = f'"{remote_audio}" --model {hpc.model} -o "{remote_results}"'
     if hpc.diarize:
         cli_args += " --diarize"
+    cli_args += " --summarize"
 
     return f"""#!/bin/bash
 #SBATCH --job-name=notetaker
