@@ -228,5 +228,10 @@ export PATH="{hpc.remote_dir}:$PATH"
 if [ -f venv/bin/activate ]; then
     source venv/bin/activate
 fi
+# Add pip-installed cuDNN to library path
+CUDNN_LIB=$({hpc.python} -c "import nvidia.cudnn.lib as _l,os;print(os.path.dirname(_l.__file__))" 2>/dev/null)
+if [ -n "$CUDNN_LIB" ]; then
+    export LD_LIBRARY_PATH="$CUDNN_LIB:$LD_LIBRARY_PATH"
+fi
 {hpc.python} cli.py {cli_args}
 """
